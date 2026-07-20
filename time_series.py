@@ -5,14 +5,6 @@ from torch.utils.data import Dataset
 import torch
 data = pd.read_csv("./rivers_ts_east_germany.csv")
 
-series = data[data.columns[1]]
-
-series = series.dropna().reset_index(drop=True)
-
-mean = series.mean()
-std = series.std()
-
-normalized = (series - mean) / std
 
 class Quantizer:
 
@@ -40,19 +32,28 @@ class Quantizer:
 
         value = (left + right) / 2
         return value
-    
-quantizer = Quantizer(num_bins=256)
 
-quantizer.fit(series)
+all_normalized = []
 
-tokens = quantizer.encode(series)
+for column in data.columns[1:]:
+    series = data[column].dropna().reset_index(drop = True)
 
-split_idx = int(len(tokens) * 0.8)
+    if len(series) == 0:
+        continue
 
-train_tokens = tokens[:split_idx]
-test_tokens = tokens[split_idx:]
+    mean = series.mean()
+    std = series.std()
 
-reconstructed = quantizer.decode(tokens)
+    normalized = (series - mean)/std
+    all_normalized.append(normalized)
+
+all_normalized = np.concatenate(all_normalized)
+
+quantizer = Quantizer(256)
+
+quantizer.fit(all_normalized)
+
+
 
 class TimeSeriesDataset(Dataset):
     def __init__(self, tokens, context_length, prediction_length, sos_tokens):
@@ -71,20 +72,39 @@ class TimeSeriesDataset(Dataset):
         decoder_target = future
 
         return (torch.tensor(encoder, dtype=torch.long), torch.tensor(decoder_input, dtype=torch.long), torch.tensor(decoder_target, dtype=torch.long),)
-     
 
-dataset = TimeSeriesDataset(tokens, 128, 32, 256)
+class MultiTimeSeriesDataset(Dataset):
+    def __init__(self, dataframe, context_length, prediction_length, quantizer, sos_token):
+        super().__init__()
+        self.samples = []
+        for column in dataframe[1:]:
+            series = dataframe[column]
+            series.dropna().reset_index(drop = True)
+            if len(series) < context_length + prediction_length:
+                continue
+            mean = series.mean()
+            std = series.std()
 
-train_dataset = TimeSeriesDataset(train_tokens, 128, 32, 256)
-test_dataset = TimeSeriesDataset(test_tokens, 128, 32, 256)
+            series = (series - mean)/std
+            tokens = quantizer.encode(series)
+            for i in range(len(tokens) - context_length - prediction_length + 1):
+                encoder = tokens[i : i + context_length]
+                future = tokens[i + context_length : i + context_length + prediction_length]
+                decoder_input = [sos_token] + future[:-1].tolist()
+                decoder_target = future
+                self.samples.append((torch.tensor(encoder, dtype=torch.long), torch.tensor(decoder_input, dtype=torch.long), torch.tensor(decoder_target, dtype=torch.long)))
 
-from torch.utils.data import DataLoader
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, index):
+        return self.samples[index]
+    
 
-loader = DataLoader(
-    dataset,
-    batch_size=32,
-    shuffle=True
-)
+tokens = quantizer.encoder(normalized)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+split_idx = int(len(tokens) * 0.8)
+
+train_tokens = tokens[:split_idx]
+test_tokens = tokens[split_idx:]
+
