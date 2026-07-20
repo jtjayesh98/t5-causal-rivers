@@ -45,7 +45,10 @@ for column in data.columns[1:]:
     std = series.std()
 
     normalized = (series - mean)/std
-    all_normalized.append(normalized)
+
+    split_idx = int(len(normalized) * 0.8)
+
+    all_normalized.append(normalized[:split_idx])
 
 all_normalized = np.concatenate(all_normalized)
 
@@ -74,7 +77,7 @@ class TimeSeriesDataset(Dataset):
         return (torch.tensor(encoder, dtype=torch.long), torch.tensor(decoder_input, dtype=torch.long), torch.tensor(decoder_target, dtype=torch.long),)
 
 class MultiTimeSeriesDataset(Dataset):
-    def __init__(self, dataframe, context_length, prediction_length, quantizer, sos_token):
+    def __init__(self, dataframe, context_length, prediction_length, quantizer, sos_token, train = True, train_ratio = 0.8):
         super().__init__()
         self.samples = []
         for column in dataframe.columns[1:]:
@@ -88,6 +91,11 @@ class MultiTimeSeriesDataset(Dataset):
                 continue
             series = (series - mean)/std
             tokens = quantizer.encode(series)
+            split_idx = int(len(tokens) * train_ratio)
+            if train:
+                tokens = tokens[:split_idx]
+            else:
+                tokens = tokens[split_idx:]
             for i in range(len(tokens) - context_length - prediction_length + 1):
                 encoder = tokens[i : i + context_length]
                 future = tokens[i + context_length : i + context_length + prediction_length]
@@ -101,12 +109,8 @@ class MultiTimeSeriesDataset(Dataset):
     def __getitem__(self, index):
         return self.samples[index]
     
+train_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
 
-tokens = quantizer.encoder(normalized)
+test_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
 
-split_idx = int(len(tokens) * 0.8)
 
-train_tokens = tokens[:split_idx]
-test_tokens = tokens[split_idx:]
-
-#ADDED COMMMENT
