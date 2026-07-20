@@ -77,14 +77,15 @@ class MultiTimeSeriesDataset(Dataset):
     def __init__(self, dataframe, context_length, prediction_length, quantizer, sos_token):
         super().__init__()
         self.samples = []
-        for column in dataframe[1:]:
+        for column in dataframe.columns[1:]:
             series = dataframe[column]
-            series.dropna().reset_index(drop = True)
+            series = series.dropna().reset_index(drop = True)
             if len(series) < context_length + prediction_length:
                 continue
             mean = series.mean()
             std = series.std()
-
+            if std == 0:
+                continue
             series = (series - mean)/std
             tokens = quantizer.encode(series)
             for i in range(len(tokens) - context_length - prediction_length + 1):
