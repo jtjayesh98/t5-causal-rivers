@@ -158,9 +158,20 @@ class MultiTimeSeriesDataset(Dataset):
             torch.from_numpy(future),
         )
     
-train_loader = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
+train_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
 
-test_loader = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
+test_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
 
+from torch.utils.data import DataLoader
 
-dataset = []
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=32,
+    shuffle=True
+)
+
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=32,
+    shuffle=False
+)
