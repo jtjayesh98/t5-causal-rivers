@@ -1,5 +1,5 @@
 from self_attention import Transformer, forecast
-from time_series import dataset, loader, train_loader, test_loader
+from time_series import train_loader, test_loader
 import torch.nn as nn
 import torch
 
@@ -38,7 +38,7 @@ for epoch in range(10):
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    print(epoch, total_loss / len(loader))
+    print(epoch, total_loss / len(train_loader))
 
 
 model.eval()

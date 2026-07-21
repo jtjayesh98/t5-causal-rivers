@@ -35,7 +35,8 @@ class Quantizer:
 
 all_normalized = []
 
-for column in data.columns[1:]:
+for column in data.columns[1:5]:
+    print(column)
     series = data[column].dropna().reset_index(drop = True)
 
     if len(series) == 0:
@@ -77,40 +78,89 @@ class TimeSeriesDataset(Dataset):
         return (torch.tensor(encoder, dtype=torch.long), torch.tensor(decoder_input, dtype=torch.long), torch.tensor(decoder_target, dtype=torch.long),)
 
 class MultiTimeSeriesDataset(Dataset):
-    def __init__(self, dataframe, context_length, prediction_length, quantizer, sos_token, train = True, train_ratio = 0.8):
+    def __init__(
+        self,
+        dataframe,
+        context_length,
+        prediction_length,
+        quantizer,
+        sos_token,
+        train=True,
+        train_ratio=0.8,
+    ):
         super().__init__()
-        self.samples = []
+
+        self.context_length = context_length
+        self.prediction_length = prediction_length
+        self.sos_token = sos_token
+
+        # Store one token array per time series
+        self.series_tokens = []
+
+        # Maps dataset index -> (series_index, window_start)
+        self.index = []
+
         for column in dataframe.columns[1:]:
-            series = dataframe[column]
-            series = series.dropna().reset_index(drop = True)
+            series = dataframe[column].dropna().reset_index(drop=True)
+
             if len(series) < context_length + prediction_length:
                 continue
+
             mean = series.mean()
             std = series.std()
+
             if std == 0:
                 continue
-            series = (series - mean)/std
-            tokens = quantizer.encode(series)
+
+            series = (series - mean) / std
+            tokens = quantizer.encode(series).astype(np.int64)
+
             split_idx = int(len(tokens) * train_ratio)
+
             if train:
                 tokens = tokens[:split_idx]
             else:
                 tokens = tokens[split_idx:]
-            for i in range(len(tokens) - context_length - prediction_length + 1):
-                encoder = tokens[i : i + context_length]
-                future = tokens[i + context_length : i + context_length + prediction_length]
-                decoder_input = [sos_token] + future[:-1].tolist()
-                decoder_target = future
-                self.samples.append((torch.tensor(encoder, dtype=torch.long), torch.tensor(decoder_input, dtype=torch.long), torch.tensor(decoder_target, dtype=torch.long)))
+
+            if len(tokens) < context_length + prediction_length:
+                continue
+
+            series_id = len(self.series_tokens)
+            self.series_tokens.append(tokens)
+
+            n_windows = len(tokens) - context_length - prediction_length + 1
+
+            for start in range(n_windows):
+                self.index.append((series_id, start))
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.index)
+
+    def __getitem__(self, idx):
+        series_id, start = self.index[idx]
+
+        tokens = self.series_tokens[series_id]
+
+        encoder = tokens[start:start + self.context_length]
+
+        future = tokens[
+            start + self.context_length:
+            start + self.context_length + self.prediction_length
+        ]
+
+        decoder_input = np.empty(self.prediction_length, dtype=np.int64)
+        decoder_input[0] = self.sos_token
+        decoder_input[1:] = future[:-1]
+
+        return (
+            torch.from_numpy(encoder),
+            torch.from_numpy(decoder_input),
+            torch.from_numpy(future),
+        )
     
-    def __getitem__(self, index):
-        return self.samples[index]
-    
-train_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
+train_loader = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
 
-test_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
+test_loader = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
 
 
+dataset = []
