@@ -3,6 +3,7 @@ from time_series import train_loader, test_loader
 import torch.nn as nn
 import torch
 
+device = ("cuda" if torch.cuda.is_available() else "cpu")
 model = Transformer(
     vocab_size=257,
     d_model=64,
@@ -11,6 +12,7 @@ model = Transformer(
     num_layers=4,
     max_len=512
 )
+model.to(device)
 
 
 
@@ -21,9 +23,15 @@ optimizer = torch.optim.Adam(
     lr=1e-3
 )
 
+print("Starting Training")
+
 for epoch in range(10):
     total_loss = 0
     for encoder_input, decoder_input, decoder_target in train_loader:
+        encoder_input = encoder_input.to(device, non_blocking=True)
+        decoder_input = decoder_input.to(device, non_blocking=True)
+        decoder_target = decoder_target.to(device, non_blocking=True)
+
         output = model(
             encoder_input,
             decoder_input
@@ -47,6 +55,10 @@ test_loss = 0
 
 with torch.no_grad():
     for encoder_input, decoder_input, decoder_target in test_loader:
+
+        encoder_input = encoder_input.to(device, non_blocking=True)
+        decoder_input = decoder_input.to(device, non_blocking=True)
+        decoder_target = decoder_target.to(device, non_blocking=True)
         output = model(encoder_input, decoder_input)
 
         output = output.reshape(-1, 257)

@@ -5,10 +5,9 @@
 #SBATCH --nodes=1
 #SBATCH --output=myjob.%j.out
 #SBATCH --error=myjob.%j.err
-#SBATCH --mem=128G
 
 # Your commands go here
 source ~/.bashrc
 conda activate causal_rivers
-python training.py
+python training.py --nodelist=gaia3
 

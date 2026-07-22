@@ -3,6 +3,9 @@ import numpy as np
 # from self_attention import Transformer
 from torch.utils.data import Dataset
 import torch
+from numpy.lib.stride_tricks import sliding_window_view
+
+
 data = pd.read_csv("./rivers_ts_east_germany.csv")
 
 
@@ -34,9 +37,9 @@ class Quantizer:
         return value
 
 all_normalized = []
+print(data.shape)
+for column in data.columns[1:]:
 
-for column in data.columns[1:5]:
-    print(column)
     series = data[column].dropna().reset_index(drop = True)
 
     if len(series) == 0:
@@ -85,22 +88,29 @@ class MultiTimeSeriesDataset(Dataset):
         prediction_length,
         quantizer,
         sos_token,
+        columns=None,
         train=True,
         train_ratio=0.8,
     ):
         super().__init__()
-
+        if columns is None:
+            columns = dataframe.columns[1:]
         self.context_length = context_length
         self.prediction_length = prediction_length
         self.sos_token = sos_token
+        self.window_size = context_length + prediction_length  
+
+        self.series_window = []
 
         # Store one token array per time series
-        self.series_tokens = []
+        self.window_counts = []
 
         # Maps dataset index -> (series_index, window_start)
-        self.index = []
+        self.cumulative_counts = []
 
-        for column in dataframe.columns[1:]:
+        total = 0
+
+        for column in columns:
             series = dataframe[column].dropna().reset_index(drop=True)
 
             if len(series) < context_length + prediction_length:
@@ -122,56 +132,67 @@ class MultiTimeSeriesDataset(Dataset):
             else:
                 tokens = tokens[split_idx:]
 
-            if len(tokens) < context_length + prediction_length:
+            if len(tokens) < self.window_size:
                 continue
 
-            series_id = len(self.series_tokens)
-            self.series_tokens.append(tokens)
+            windows = sliding_window_view(tokens, self.window_size)
 
-            n_windows = len(tokens) - context_length - prediction_length + 1
+            self.series_window.append(windows)
 
-            for start in range(n_windows):
-                self.index.append((series_id, start))
+            n_windows = windows.shape[0]
 
+            self.window_counts.append(n_windows)
+            print(f"{column}: {n_windows:,} windows")
+            total += n_windows
+            self.cumulative_counts.append(total)
+        print(f"Total windows: {sum(self.window_counts):,}")
     def __len__(self):
-        return len(self.index)
+        return self.cumulative_counts[-1]
 
     def __getitem__(self, idx):
-        series_id, start = self.index[idx]
 
-        tokens = self.series_tokens[series_id]
+        series_id = np.searchsorted(self.cumulative_counts, idx, side="right")
 
-        encoder = tokens[start:start + self.context_length]
+        if series_id == 0:
+            local_idx = idx
+        else:
+            local_idx = idx - self.cumulative_counts[series_id - 1]
 
-        future = tokens[
-            start + self.context_length:
-            start + self.context_length + self.prediction_length
-        ]
+        window = self.series_window[series_id][local_idx]
+
+        encoder = window[:self.context_length]
+        future = window[self.context_length:]
 
         decoder_input = np.empty(self.prediction_length, dtype=np.int64)
         decoder_input[0] = self.sos_token
         decoder_input[1:] = future[:-1]
 
         return (
-            torch.from_numpy(encoder),
+            torch.from_numpy(encoder.copy()),
             torch.from_numpy(decoder_input),
-            torch.from_numpy(future),
+            torch.from_numpy(future.copy()),
         )
-    
-train_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
 
-test_dataset = MultiTimeSeriesDataset(dataframe= data, context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
+print("Creating Dataset")
+
+train_dataset = MultiTimeSeriesDataset(dataframe= data, columns=data.columns[1:10], context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = True)
+
+test_dataset = MultiTimeSeriesDataset(dataframe= data, columns=data.columns[1:10], context_length= 128, prediction_length= 32, quantizer= quantizer, sos_token= 256, train = False)
+
+print("Dataset Created")
 
 from torch.utils.data import DataLoader
 
 train_loader = DataLoader(
     train_dataset,
     batch_size=32,
-    shuffle=True
+    shuffle=True,
+    pin_memory= True
 )
 
 test_loader = DataLoader(
     test_dataset,
     batch_size=32,
-    shuffle=False
+    shuffle=False,
+    pin_memory = True
 )
